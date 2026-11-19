@@ -1,0 +1,1074 @@
+{
+  "name": "SOAR_Phishing_Email_Detection",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {
+          "labelIds": [
+            "INBOX"
+          ],
+          "readStatus": "unread"
+        }
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "b1ec2fee-3681-4f29-ae9f-16779528ba04",
+      "name": "Gmail Trigger",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xx4RM7ysJ2Awx0ck",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "messageId": "={{ $json.id }}",
+        "simple": false,
+        "options": {
+          "dataPropertyAttachmentsPrefixName": "attachment_",
+          "downloadAttachments": true
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "2c55c4ea-954b-4f46-bb2a-7f31e00f42ce",
+      "name": "Get a message",
+      "webhookId": "79726312-077b-43c0-9ef9-b409bf40ec01",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xx4RM7ysJ2Awx0ck",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nreturn items.map(item => {\n  const email = item.json;\n\n  // Lấy nội dung văn bản thuần từ Gmail\n  const body = String(email.text ?? '');\n\n  // Tìm URL\n  const matches = body.match(/https?:\\/\\/[^\\s<>\"']+/gi) || [];\n\n  // Loại bỏ dấu câu cuối URL và trùng lặp\n  const urls = [...new Set(\n    matches.map(url => url.replace(/[.,;!?)}\\]]+$/g, ''))\n  )];\n\n  // Lấy domain\n  \n  const domains = [...new Set(\n    urls.map(url => {\n      const match = url.match(/^https?:\\/\\/([^/?#:]+)/i);\n  \n      return match\n        ? match[1].toLowerCase().replace(/^www\\./, '')\n        : null;\n    }).filter(Boolean)\n  )];\n\n\n  return {\n    json: {\n      ...email,\n      debugTextLength: body.length,\n      debugTextPreview: body,\n      debugMatches: matches,\n      urls,\n      urlCount: urls.length,\n      domains\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        512,
+        -96
+      ],
+      "id": "c63e9a7f-d7dd-49dd-ac81-eb6bd05d9e98",
+      "name": "Extract URLs"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.virustotal.com/api/v3/urls",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "virusTotalApi",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{$json.urls}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1168,
+        -224
+      ],
+      "id": "5071d3a5-475a-4f2a-9138-f044d2b31700",
+      "name": "HTTP Request",
+      "credentials": {
+        "virusTotalApi": {
+          "id": "zUaP0dszhxitWNsz",
+          "name": "VirusTotal account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://www.virustotal.com/api/v3/analyses/{{$json.data.id}}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "virusTotalApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1648,
+        -224
+      ],
+      "id": "9e74934d-6ca5-47a1-8bbe-a17a88110ed3",
+      "name": "Get VT Analysis",
+      "credentials": {
+        "virusTotalApi": {
+          "id": "zUaP0dszhxitWNsz",
+          "name": "VirusTotal account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "6561400902",
+        "text": "=\n🚨 SOAR SECURITY ALERT\n\n{{\n  (\n    Number($('Build Wazuh Event').item.json.vt_malicious ?? 0) >= 5 ||\n    Number($('Build Wazuh Event').item.json.sigma_critical ?? 0) > 0 ||\n    Number($('Build Wazuh Event').item.json.sigma_high ?? 0) > 0\n  )\n    ? '🔴 CRITICAL THREAT DETECTED'\n    : '🟠 WARNING - SUSPICIOUS CONTENT DETECTED'\n}}\n\n📧 EMAIL INFORMATION\n\nSubject: {{ $('Build Wazuh Event').item.json.subject || 'N/A' }}\nSender: {{ $('Build Wazuh Event').item.json.sender || 'N/A' }}\n\n{{ $('Build Wazuh Event').item.json.event_type === 'phishing_url_analysis'\n  ? `🔗 URL INFORMATION\n\nURL: ${$('Build Wazuh Event').item.json.url || 'N/A'}\nDomain: ${$('Build Wazuh Event').item.json.domain || 'N/A'}\nVerdict: ${$('Build Wazuh Event').item.json.verdict || 'N/A'}`\n  : ''\n}}\n\n{{ $('Build Wazuh Event').item.json.event_type === 'phishing_file_analysis'\n  ? `📎 FILE INFORMATION\n\nFile name: ${$('Build Wazuh Event').item.json.file_name || 'N/A'}\nFile type: ${$('Build Wazuh Event').item.json.file_type || 'N/A'}\nSHA256: ${$('Build Wazuh Event').item.json.file_sha256 || 'N/A'}\n\nFile verdict: ${$('Build Wazuh Event').item.json.file_verdict || 'N/A'}\nFile severity: ${$('Build Wazuh Event').item.json.file_severity || 'N/A'}\n\nSIGMA ANALYSIS\nCritical: ${$('Build Wazuh Event').item.json.sigma_critical ?? 0}\nHigh: ${$('Build Wazuh Event').item.json.sigma_high ?? 0}\nMedium: ${$('Build Wazuh Event').item.json.sigma_medium ?? 0}\nLow: ${$('Build Wazuh Event').item.json.sigma_low ?? 0}`\n  : ''\n}}\n\n🦠 VIRUSTOTAL ANALYSIS\n\nMalicious: {{ $('Build Wazuh Event').item.json.vt_malicious ?? 0 }}\nSuspicious: {{ $('Build Wazuh Event').item.json.vt_suspicious ?? 0 }}\nHarmless: {{ $('Build Wazuh Event').item.json.vt_harmless ?? 0 }}\nUndetected: {{ $('Build Wazuh Event').item.json.vt_undetected ?? 0 }}\n\n🛡️ AUTOMATED RESPONSE\n\n{{\n  (\n    Number($('Build Wazuh Event').item.json.vt_malicious ?? 0) >= 5 ||\n    Number($('Build Wazuh Event').item.json.sigma_critical ?? 0) > 0 ||\n    Number($('Build Wazuh Event').item.json.sigma_high ?? 0) > 0\n  )\n    ? `🔴 CRITICAL RESPONSE:\n- Email labeled SOAR_QUARANTINE.\n- Email removed from Inbox.`\n    : `🟠 WARNING RESPONSE:\n- Email labeled SOAR_REVIEW.\n- Email remains in Inbox.`\n}}\n\n- Security alert sent to Telegram.\n\nDetection System: SOAR + n8n + Wazuh + VirusTotal\n\n🔎 TRACE INFORMATION\n\nGmail API ID: {{ $('Build Wazuh Event').item.json.email_id || 'N/A' }}\n\nMessage-ID: {{ $('Build Wazuh Event').item.json.message_id || 'N/A' }}\n\nWazuh Event ID: {{ $('Build Wazuh Event').item.json.event_id || 'N/A' }}\n\n",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3872,
+        64
+      ],
+      "id": "c9d8ff4d-ca47-4bf1-9403-df9b91745911",
+      "name": "Send a text message1",
+      "webhookId": "ad338fb2-55a9-41da-8d8f-782a2aa32888",
+      "credentials": {
+        "telegramApi": {
+          "id": "78pZU57p1nvumL6W",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 15
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1440,
+        -224
+      ],
+      "id": "24233c8b-eaf4-4249-87ae-4fdc4f515256",
+      "name": "Wait",
+      "webhookId": "8cca21d7-24cc-4dea-bcff-afd9496fdc1f"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "17903738-04cd-40d7-859e-6083e760864d",
+              "leftValue": "={{$json.data.attributes.status}}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        1824,
+        -224
+      ],
+      "id": "9104589e-383e-4aaa-bc7d-a4c8de65558b",
+      "name": "VT Analysis Completed?"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "urls",
+        "include": "allOtherFields",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        -224
+      ],
+      "id": "80fb9a2e-4df4-4352-b116-a50e2d377a25",
+      "name": "Split Out",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst inputItems = $input.all();\nconst email = $('Get a message').first().json;\n\nconst timestamp = new Date().toISOString();\n\n// ==========================================\n// EVENT DETECTION HELPERS\n// ==========================================\n\nconst isFileItem = (item) =>\n  item.event_type === 'phishing_file_analysis' ||\n  Boolean(item.file_sha256 || item.file_name);\n\nconst isUrlItem = (item) =>\n  item.event_type === 'phishing_url_analysis' ||\n  Boolean(item.data?.attributes?.stats) ||\n  Boolean(item.url || item.urls);\n\nconst isPlaceholderItem = (item) =>\n  item.event_type === 'no_url' ||\n  item.event_type === 'no_file';\n\n// ==========================================\n// CHECK ALL ITEMS IN THIS EMAIL EXECUTION\n// ==========================================\n\nconst hasFileEvent = inputItems.some(\n  ({ json }) => isFileItem(json ?? {})\n);\n\nconst hasUrlEvent = inputItems.some(\n  ({ json }) => isUrlItem(json ?? {})\n);\n\nconst hasIocEvent = hasFileEvent || hasUrlEvent;\n\nconst firstPlaceholderIndex = inputItems.findIndex(\n  ({ json }) => isPlaceholderItem(json ?? {})\n);\n\n// ==========================================\n// BUILD WAZUH EVENTS\n// ==========================================\n\nconst output = [];\n\nfor (let i = 0; i < inputItems.length; i++) {\n\n  const item = inputItems[i].json ?? {};\n\n  // ========================================\n  // NORMALIZE EMAIL INFORMATION\n  // ========================================\n\n  const rawSender =\n    item.sender ??\n    email.from?.value?.[0]?.address ??\n    email.from?.text ??\n    '';\n\n  const senderMatch = String(rawSender).match(/<([^>]+)>/);\n\n  const sender = senderMatch\n    ? senderMatch[1].trim()\n    : String(rawSender).trim();\n\n  const emailId = item.email_id ?? email.id ?? 'unknown';\n  const subject = item.subject ?? email.subject ?? '';\n\n  const isFile = isFileItem(item);\n  const isUrl = isUrlItem(item);\n  const isPlaceholder = isPlaceholderItem(item);\n\n  let event;\n\n  // ========================================\n  // 1. FILE ANALYSIS\n  // ========================================\n\n  if (isFile) {\n\n    event = {\n      event_timestamp: timestamp,\n\n      integration: 'n8n_phishing',\n      event_type: 'phishing_file_analysis',\n\n      event_id: `${emailId}::file::${item.file_sha256 ?? 'unknown'}`,\n\n      email_id: emailId,\n      subject,\n      sender,\n\n      file_present: true,\n\n      file_name: item.file_name ?? '',\n      file_sha256: item.file_sha256 ?? '',\n      file_type: item.file_type ?? '',\n\n      vt_malicious: Number(item.vt_malicious ?? 0),\n      vt_suspicious: Number(item.vt_suspicious ?? 0),\n      vt_harmless: Number(item.vt_harmless ?? 0),\n      vt_undetected: Number(item.vt_undetected ?? 0),\n\n      sigma_critical: Number(item.sigma_critical ?? 0),\n      sigma_high: Number(item.sigma_high ?? 0),\n      sigma_medium: Number(item.sigma_medium ?? 0),\n\n      file_verdict: item.file_verdict ?? 'unknown',\n      file_severity: item.file_severity ?? 'unknown',\n\n      vt_tags: item.vt_tags ?? []\n    };\n\n  }\n\n  // ========================================\n  // 2. URL ANALYSIS\n  // ========================================\n\n  else if (isUrl) {\n\n    // Get the URL corresponding to this input item\n    let splitItem = {};\n\n    try {\n      splitItem = $('Split Out').itemMatching(i).json ?? {};\n    } catch (error) {\n      splitItem = {};\n    }\n\n    const rawUrl =\n      item.url ??\n      item.urls ??\n      splitItem.urls ??\n      splitItem.url ??\n      '';\n\n    const url = Array.isArray(rawUrl)\n      ? String(rawUrl[0] ?? '').trim()\n      : String(rawUrl).trim();\n\n    if (!url) {\n      throw new Error(`URL not found for input item ${i}`);\n    }\n\n    const stats = item.data?.attributes?.stats ?? {};\n\n    const malicious = Number(stats.malicious ?? 0);\n    const suspicious = Number(stats.suspicious ?? 0);\n    const harmless = Number(stats.harmless ?? 0);\n    const undetected = Number(stats.undetected ?? 0);\n\n    const match = url.match(/^https?:\\/\\/([^/:?#]+)/i);\n\n    const domain = match\n      ? match[1].toLowerCase()\n      : '';\n\n    const verdict =\n      malicious > 0 ? 'malicious' :\n      suspicious > 0 ? 'suspicious' :\n      'clean';\n\n    event = {\n      event_timestamp: timestamp,\n\n      integration: 'n8n_phishing',\n      event_type: 'phishing_url_analysis',\n\n      event_id: `${emailId}::${url}`,\n\n      email_id: emailId,\n      subject,\n      sender,\n\n      url_present: true,\n\n      url,\n      domain,\n\n      vt_malicious: malicious,\n      vt_suspicious: suspicious,\n      vt_harmless: harmless,\n      vt_undetected: undetected,\n\n      verdict\n    };\n\n  }\n\n  // ========================================\n  // 3. NO URL / NO FILE\n  // ========================================\n\n  else if (isPlaceholder) {\n\n    // If ANY URL or file IOC exists,\n    // do not create email_no_ioc.\n    if (hasIocEvent) {\n      continue;\n    }\n\n    // If both no_url and no_file exist,\n    // create only ONE no_ioc event.\n    if (i !== firstPlaceholderIndex) {\n      continue;\n    }\n\n    event = {\n      event_timestamp: timestamp,\n\n      integration: 'n8n_phishing',\n      event_type: 'email_no_ioc',\n\n      event_id: `${emailId}::no_ioc`,\n\n      email_id: emailId,\n      subject,\n      sender,\n\n      url_present: false,\n      file_present: false,\n\n      vt_malicious: 0,\n      vt_suspicious: 0,\n      vt_harmless: 0,\n      vt_undetected: 0,\n\n      verdict: 'no_ioc'\n    };\n\n  }\n\n  // ========================================\n  // 4. UNKNOWN EVENT\n  // ========================================\n\n  else {\n    throw new Error(\n      `Unknown event type: ${item.event_type ?? 'undefined'}`\n    );\n  }\n\n  // ========================================\n  // EMAIL TRACE / CORRELATION INFORMATION\n  // ========================================\n\n  const gmailMessageId = String(\n    email.id ?? emailId ?? 'unknown'\n  );\n\n  const rawMessageId =\n    email.messageId ??\n    email.headers?.['message-id'] ??\n    '';\n\n  const internetMessageId = String(rawMessageId)\n    .replace(/^Message-ID:\\s*/i, '')\n    .trim();\n\n  event.email_id = gmailMessageId;\n  event.message_id = internetMessageId;\n\n  // ========================================\n  // STANDARDIZED OUTPUT\n  // ========================================\n\n  const safeEmailId = String(emailId)\n    .replace(/[^a-zA-Z0-9_-]/g, '_');\n\n  const safeEventId = String(event.event_id ?? '')\n    .replace(/[^a-zA-Z0-9_-]/g, '_')\n    .slice(-80);\n\n  output.push({\n    json: {\n      ...event,\n\n      remote_file_name:\n        `${safeEmailId}_${event.event_type}_${safeEventId}.json`,\n\n      logLine: JSON.stringify(event) + '\\n'\n    },\n\n    pairedItem: {\n      item: i\n    }\n  });\n\n}\n\nreturn output;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2672,
+        144
+      ],
+      "id": "7b546d0b-c339-4725-9ce5-019c08d6fe07",
+      "name": "Build Wazuh Event"
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "logLine",
+        "options": {
+          "encoding": "utf8"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.2,
+      "position": [
+        2864,
+        272
+      ],
+      "id": "1e92a3b2-049b-4568-90fc-cad61491054a",
+      "name": "Convert to File"
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Get a message').item.json.id }}",
+        "labelIds": [
+          "Label_4006227410409236998"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        3360,
+        16
+      ],
+      "id": "6d5b04da-51ee-4e01-a917-b2522cd22a64",
+      "name": "Quarantine Email",
+      "webhookId": "8d833cec-c487-4349-a3d3-b285a286872b",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xx4RM7ysJ2Awx0ck",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "removeLabels",
+        "messageId": "={{ $('Get a message').item.json.id }}",
+        "labelIds": [
+          "INBOX"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        3632,
+        16
+      ],
+      "id": "891db276-bb78-4b75-a5e8-ad52a030abc6",
+      "name": "Remove from Inbox",
+      "webhookId": "b7104061-b0de-45c6-af78-525443bd6415",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xx4RM7ysJ2Awx0ck",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "b7e9fe96-6a42-42fa-9002-a87ed179b7e4",
+              "leftValue": "={{ Number($json.vt_malicious ?? 0) >= 5 }}",
+              "rightValue": 5,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        3104,
+        64
+      ],
+      "id": "925511c7-6bb6-44d9-9e9f-514fba976be7",
+      "name": "Check Critical Threat"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "62e99af1-4340-47ab-a4b2-cc29f332c9d1",
+              "leftValue": "={{\n  (\n    Number($json.vt_malicious ?? 0) >= 1 &&\n    Number($json.vt_malicious ?? 0) <= 4\n  )\n  ||\n  (\n    Number($json.vt_malicious ?? 0) === 0 &&\n    Number($json.vt_suspicious ?? 0) >= 3\n  )\n}}",
+              "rightValue": 1,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        3360,
+        208
+      ],
+      "id": "87c4b9f5-c117-4eee-90ec-807ed1adeb1d",
+      "name": "Check Warning Threat"
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Get a message').item.json.id }}",
+        "labelIds": [
+          "Label_7657029944787063450"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        3632,
+        192
+      ],
+      "id": "9fdb6772-f097-45f8-a4c0-b6e27ed6edf5",
+      "name": "Add label to message",
+      "webhookId": "5c20f34b-a6b5-4a56-b863-e28ba079cb25",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "xx4RM7ysJ2Awx0ck",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "binaryData": true,
+        "binaryPropertyName": "attachment_0",
+        "dataPropertyName": "sha256"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        352
+      ],
+      "id": "9216e15c-4e6c-4d99-8839-8fdce6ce4dc5",
+      "name": "Crypto"
+    },
+    {
+      "parameters": {
+        "url": "=https://www.virustotal.com/api/v3/files/{{$json.sha256}}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "virusTotalApi",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1584,
+        352
+      ],
+      "id": "cd1bf40f-b4a5-42a2-ab2e-fcb45f853dcc",
+      "name": "Get VT File Report",
+      "credentials": {
+        "virusTotalApi": {
+          "id": "zUaP0dszhxitWNsz",
+          "name": "VirusTotal account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\n// ==========================================\n// CURRENT VIRUSTOTAL FILE REPORT\n// ==========================================\n\nconst root = $json;\nconst attrs = root.data?.attributes ?? {};\n\nconst stats = attrs.last_analysis_stats ?? {};\nconst sigma = attrs.sigma_analysis_stats ?? {};\n\n// ==========================================\n// GET THE CORRECT PAIRED EMAIL\n// IMPORTANT: DO NOT USE .first()\n// ==========================================\n\nconst emailItem = $('Get a message').item;\nconst email = emailItem.json ?? {};\n\n// Verify that this email actually has an attachment\nconst binaryEntries = Object.entries(emailItem.binary ?? {});\n\nif (binaryEntries.length === 0) {\n  throw new Error(\n    `No attachment paired with email ${email.id ?? 'unknown'}. Refusing to create file event.`\n  );\n}\n\nconst [binaryKey, attachment] = binaryEntries[0];\n\n// ==========================================\n// VERIFY VIRUSTOTAL HASH AGAINST CRYPTO HASH\n// ==========================================\n\nconst cryptoItem = $('Crypto').item;\n\nconst calculatedHash = String(\n  cryptoItem.json?.sha256 ?? ''\n).toLowerCase();\n\nconst reportHash = String(\n  attrs.sha256 ?? root.data?.id ?? ''\n).toLowerCase();\n\nif (!reportHash) {\n  throw new Error('VirusTotal report has no SHA256.');\n}\n\nif (\n  calculatedHash &&\n  calculatedHash !== reportHash\n) {\n  throw new Error(\n    `SHA256 mismatch! Crypto: ${calculatedHash}, VirusTotal: ${reportHash}`\n  );\n}\n\n// ==========================================\n// EMAIL INFORMATION\n// ==========================================\n\nconst rawSender =\n  email.from?.value?.[0]?.address ??\n  email.from?.text ??\n  '';\n\nconst senderMatch = String(rawSender).match(/<([^>]+)>/);\n\nconst sender = senderMatch\n  ? senderMatch[1].trim()\n  : String(rawSender).trim();\n\nconst emailId = email.id ?? '';\n\nif (!emailId) {\n  throw new Error('Missing Gmail email ID.');\n}\n\n// ==========================================\n// VIRUSTOTAL STATISTICS\n// ==========================================\n\nconst malicious = Number(stats.malicious ?? 0);\nconst suspicious = Number(stats.suspicious ?? 0);\n\nconst sigmaCritical = Number(sigma.critical ?? 0);\nconst sigmaHigh = Number(sigma.high ?? 0);\nconst sigmaMedium = Number(sigma.medium ?? 0);\n\nlet fileVerdict = 'no_detection';\nlet fileSeverity = 'info';\n\nif (malicious > 0) {\n  fileVerdict = 'malicious';\n  fileSeverity = 'critical';\n} else if (\n  suspicious > 0 ||\n  sigmaCritical > 0 ||\n  sigmaHigh > 0\n) {\n  fileVerdict = 'suspicious';\n  fileSeverity = 'warning';\n} else if (sigmaMedium > 0) {\n  fileVerdict = 'review';\n  fileSeverity = 'warning';\n}\n\n// ==========================================\n// OUTPUT\n// ==========================================\n\nreturn {\n  json: {\n    event_type: 'phishing_file_analysis',\n\n    email_id: emailId,\n    subject: email.subject ?? '',\n    sender,\n\n    message_id: email.messageId ?? '',\n\n    file_present: true,\n    file_name:\n      attachment.fileName ??\n      attrs.meaningful_name ??\n      attrs.names?.[0] ??\n      'unknown',\n\n    file_sha256: reportHash,\n    file_type: attrs.type_description ?? '',\n\n    vt_malicious: malicious,\n    vt_suspicious: suspicious,\n    vt_harmless: Number(stats.harmless ?? 0),\n    vt_undetected: Number(stats.undetected ?? 0),\n\n    sigma_critical: sigmaCritical,\n    sigma_high: sigmaHigh,\n    sigma_medium: sigmaMedium,\n    sigma_low: Number(sigma.low ?? 0),\n\n    file_verdict: fileVerdict,\n    file_severity: fileSeverity,\n\n    vt_tags: attrs.tags ?? []\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        352
+      ],
+      "id": "580841f6-65c0-459a-b8fb-70f4275ebcf8",
+      "name": "Analyze File Threat"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2256,
+        192
+      ],
+      "id": "7d2995bf-bc56-4d35-ad12-3444ee974d87",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "resource": "file",
+        "path": "/var/log/soar/incoming",
+        "options": {
+          "fileName": "={{ $('Build Wazuh Event').item.json.remote_file_name }}"
+        }
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        3040,
+        304
+      ],
+      "id": "305d2cb8-d293-424e-a8a3-71ebd0cd93e0",
+      "name": "Upload a file",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "VrbexjUsq1iH1qZR",
+          "name": "SSH Private Key account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": " set -euo pipefail; shopt -s nullglob; files=(/var/log/soar/incoming/*.json); if ((${#files[@]} == 0)); then echo \"NO_FILES\"; exit 0; fi; for f in \"${files[@]}\"; do while IFS= read -r line || [[ -n \"$line\" ]]; do printf '%s\\n' \"$line\" >> /var/log/soar/phishing-events.json; done < \"$f\"; rm -- \"$f\"; printf 'APPENDED: %s\\n' \"$f\"; done; echo \"DONE\""
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        3200,
+        304
+      ],
+      "id": "0b165294-7cd8-435a-b74b-dd1033f73454",
+      "name": "Execute a command",
+      "executeOnce": true,
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "VrbexjUsq1iH1qZR",
+          "name": "SSH Private Key account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "adfdce28-7f23-450b-9507-d2683f03330a",
+              "leftValue": "",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        2448,
+        192
+      ],
+      "id": "4d7af1d5-d916-462a-8fa1-95bce6aed9ff",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "06819ffe-1ef4-45ba-9d57-15ff847071b6",
+              "leftValue": "={{ !!$binary?.attachment_0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        944,
+        368
+      ],
+      "id": "6c7fdbb9-4790-410e-bd0d-5b91d8cc499b",
+      "name": "IF – Has Attachment?"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6ff03531-65de-4d7a-8bef-41cc0e455abb",
+              "name": "event_type",
+              "value": "no_file",
+              "type": "string"
+            },
+            {
+              "id": "2e79540a-3f9b-493a-a829-8295a03f4894",
+              "name": "file_present",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "f1be8cb5-ed27-4546-ac61-4f186f2beeaf",
+              "name": "email_id",
+              "value": "={{ $('Get a message').item.json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "486d952e-c115-4658-853b-b5acd06bd750",
+              "name": "subject",
+              "value": "={{ $('Get a message').item.json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "39baaba6-f788-4297-9b91-9340caab9378",
+              "name": "sender",
+              "value": "={{ $('Get a message').item.json.from.value[0].address }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1584,
+        544
+      ],
+      "id": "4e211aa8-f9dc-40ab-a5b7-921cb9ef7096",
+      "name": "No File"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "78104e11-b80a-4491-b50c-35074dacc6e8",
+              "leftValue": "={{ Array.isArray($json.urls) && $json.urls.length > 0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        720,
+        -96
+      ],
+      "id": "463fd995-285b-4109-a522-faf80542bfa6",
+      "name": "IF – Has URL?"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1bb3c1d7-e27a-4826-864c-850d64eca507",
+              "name": "event_type",
+              "value": "no_url",
+              "type": "string"
+            },
+            {
+              "id": "83446cd8-755f-4fae-a671-0a60a260b97f",
+              "name": "url_present",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "31d3f23d-b689-4eea-b6dd-aa950b0253e7",
+              "name": "email_id",
+              "value": "={{ $('Get a message').item.json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "4620d944-5e5c-4bb1-8812-13b7758aec37",
+              "name": "subject",
+              "value": "={{ $('Get a message').item.json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "748ac9fb-fc58-495e-810d-a3a6ac2469ba",
+              "name": "sender",
+              "value": "={{ $('Get a message').item.json.from.value[0].address }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1344,
+        16
+      ],
+      "id": "11cc7713-34a7-494f-b7e9-35b53b254af1",
+      "name": "No URL"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "09d3d706-1766-42fd-ab09-cd0c6cc9aa33",
+              "leftValue": "={{   ['phishing_url_analysis', 'phishing_file_analysis']     .includes($json.event_type) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        2896,
+        144
+      ],
+      "id": "ddccf66f-f3a5-4862-bcbe-14f6c8133be2",
+      "name": "IF – Has IOC Event?"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a message": {
+      "main": [
+        [
+          {
+            "node": "Extract URLs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF – Has Attachment?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract URLs": {
+      "main": [
+        [
+          {
+            "node": "IF – Has URL?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get VT Analysis": {
+      "main": [
+        [
+          {
+            "node": "VT Analysis Completed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Get VT Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VT Analysis Completed?": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Wazuh Event": {
+      "main": [
+        [
+          {
+            "node": "Convert to File",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF – Has IOC Event?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File": {
+      "main": [
+        [
+          {
+            "node": "Upload a file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quarantine Email": {
+      "main": [
+        [
+          {
+            "node": "Remove from Inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove from Inbox": {
+      "main": [
+        [
+          {
+            "node": "Send a text message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Critical Threat": {
+      "main": [
+        [
+          {
+            "node": "Quarantine Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Warning Threat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Warning Threat": {
+      "main": [
+        [
+          {
+            "node": "Add label to message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add label to message": {
+      "main": [
+        [
+          {
+            "node": "Send a text message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crypto": {
+      "main": [
+        [
+          {
+            "node": "Get VT File Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get VT File Report": {
+      "main": [
+        [
+          {
+            "node": "Analyze File Threat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze File Threat": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload a file": {
+      "main": [
+        [
+          {
+            "node": "Execute a command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a command": {
+      "main": [
+        []
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Build Wazuh Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF – Has Attachment?": {
+      "main": [
+        [
+          {
+            "node": "Crypto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No File": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "IF – Has URL?": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No URL": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF – Has IOC Event?": {
+      "main": [
+        [
+          {
+            "node": "Check Critical Threat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "f4351e1a-915f-4627-bbf1-956f59609df6",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5785d1e47464cd4fcff7ad967efb430963086167fe42b0de4dd6e9c9eedbccd6"
+  },
+  "nodeGroups": [],
+  "id": "tT4R1xLXF1lBPHtY",
+  "tags": []
+}

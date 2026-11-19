@@ -1,0 +1,26 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+credentials.json
+secrets.json
+*.pem
+*.key
+
+# Runtime data
+node_modules/
+.n8n/
+*.log
+*.sqlite
+*.db
+
+# Lab files
+eve.json
+*.pcap
+*.cap
+
+# Temporary files
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
